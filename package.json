@@ -1,0 +1,15 @@
+{
+  "name": "upsc-news-map-backend",
+  "version": "1.0.0",
+  "description": "Fetches news, classifies UPSC relevance with Claude, geocodes, saves to Supabase. Run on a schedule (cron).",
+  "type": "module",
+  "main": "fetch_and_classify.js",
+  "scripts": {
+    "start": "node fetch_and_classify.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "node-fetch": "^3.3.2"
+  }
+}
