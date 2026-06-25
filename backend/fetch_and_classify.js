@@ -42,7 +42,15 @@ async function fetchRawNews() {
     try {
       const res = await fetch(url);
       const data = await res.json();
-      if (data.results) allArticles.push(...data.results);
+      if (!res.ok || data.status === "error") {
+        console.error(`NewsData.io error for query "${q}": HTTP ${res.status} -`, JSON.stringify(data));
+        continue;
+      }
+      if (Array.isArray(data.results)) {
+        allArticles.push(...data.results);
+      } else {
+        console.error(`Unexpected response shape for query "${q}":`, JSON.stringify(data));
+      }
     } catch (err) {
       console.error(`Fetch failed for query "${q}":`, err.message);
     }
