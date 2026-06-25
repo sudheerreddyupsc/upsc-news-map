@@ -16,11 +16,9 @@
  *   SUPABASE_SERVICE_KEY- Supabase "service_role" key (server-side only, never expose to frontend)
  */
 
-import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import fetch from "node-fetch";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
 
 // ---- 1. FETCH RAW NEWS -----------------------------------------------------
@@ -91,23 +89,32 @@ If not relevant:
 
 async function classifyArticle(article, attempt = 1) {
   const content = `Headline: ${article.title}\nDescription: ${article.description || ""}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
   try {
-    const msg = await anthropic.messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 200,
-      system: CLASSIFY_SYSTEM_PROMPT,
-      messages: [{ role: "user", content }]
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: CLASSIFY_SYSTEM_PROMPT }] },
+        contents: [{ parts: [{ text: content }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 200 }
+      })
     });
 
-    const text = msg.content[0].text.trim();
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${JSON.stringify(data)}`);
+    }
+
+    const text = data.candidates[0].content.parts[0].text.trim();
     const cleaned = text.replace(/```json|```/g, "").trim();
     return JSON.parse(cleaned);
   } catch (err) {
-    // Transient network errors (e.g. "Premature close") are worth a couple of
+    // Transient network or rate-limit errors are worth a couple of
     // retries with a short backoff, rather than giving up immediately.
     if (attempt < 3) {
-      await sleep(1000 * attempt);
+      await sleep(1500 * attempt);
       return classifyArticle(article, attempt + 1);
     }
     console.error("Classification failed for article:", article.title, err.message);
@@ -169,7 +176,7 @@ async function run() {
   for (const article of articles) {
     if (!article.title) continue;
 
-    await sleep(400);
+    await sleep(6500);
     const classification = await classifyArticle(article);
     if (!classification.relevant || !classification.place) continue;
 
