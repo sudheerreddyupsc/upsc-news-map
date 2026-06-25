@@ -38,7 +38,7 @@ async function fetchRawNews() {
 
   const allArticles = [];
   for (const q of queries) {
-    const url = `https://newsdata.io/api/1/news?apikey=${process.env.NEWSDATA_API_KEY}&q=${encodeURIComponent(q)}&language=en&country=in`;
+    const url = `https://newsdata.io/api/1/latest?apikey=${process.env.NEWSDATA_API_KEY}&q=${encodeURIComponent(q)}&language=en&country=in`;
     try {
       const res = await fetch(url);
       const data = await res.json();
