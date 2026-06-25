@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>UPSC News Map — live current affairs tracker</title>
+<style>
+  :root {
+    --bg: #0a0d11;
+    --panel: #11161c;
+    --border: #232b34;
+    --text-primary: #e8e8e6;
+    --text-secondary: #8d959e;
+    --text-tertiary: #5a626b;
+    --accent: #1D9E75;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text-primary);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .brand h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.02em; }
+  .meta { font-size: 12px; color: var(--text-tertiary); }
+  main {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 0;
+  }
+  @media (max-width: 860px) {
+    main { grid-template-columns: 1fr; }
+  }
+  #map-container { position: relative; height: calc(100vh - 53px); }
+  #map { width: 100%; height: 100%; background: var(--bg); }
+  aside {
+    border-left: 1px solid var(--border);
+    padding: 16px;
+    overflow-y: auto;
+    height: calc(100vh - 53px);
+  }
+  aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-tertiary); margin-bottom: 12px; font-weight: 600; }
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .filter-chip {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    cursor: pointer;
+    background: transparent;
+    user-select: none;
+  }
+  .filter-chip.active { border-color: var(--accent); color: var(--accent); background: rgba(29,158,117,0.1); }
+  .news-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .news-card:hover { border-color: var(--text-tertiary); }
+  .news-card .place { font-size: 11px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+  .news-card .headline { font-size: 13px; color: var(--text-secondary); line-height: 1.45; margin-bottom: 8px; }
+  .news-card .footer-row { display: flex; justify-content: space-between; align-items: center; }
+  .badge { font-size: 10px; padding: 2px 7px; border-radius: 5px; font-weight: 600; }
+  .timestamp { font-size: 10px; color: var(--text-tertiary); }
+  .empty-state { color: var(--text-tertiary); font-size: 13px; padding: 24px 4px; text-align: center; }
+  #tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+    max-width: 240px;
+    display: none;
+    z-index: 10;
+  }
+  #tooltip .place { font-weight: 600; margin-bottom: 4px; }
+  #tooltip .headline { color: var(--text-secondary); line-height: 1.4; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="dot"></span>
+    <h1>UPSC NEWS MAP</h1>
+  </div>
+  <span class="meta" id="last-updated">Loading...</span>
+</header>
+
+<main>
+  <div id="map-container">
+    <div id="map"></div>
+    <div id="tooltip"></div>
+  </div>
+  <aside>
+    <h2>Filter by category</h2>
+    <div class="filters" id="filters"></div>
+    <h2>Recent items</h2>
+    <div id="news-list"></div>
+  </aside>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/*
+ * FRONTEND CONFIG
+ * ----------------
+ * These two values are PUBLIC and safe to expose in client-side code.
+ * The anon key only allows reading from tables you've explicitly opened up
+ * with a Row Level Security policy (see supabase_schema.sql) — it cannot
+ * write, and it cannot read anything you haven't allowed.
+ * Get both from: Supabase project -> Settings -> API
+ */
+const SUPABASE_URL = "YOUR_SUPABASE_URL_HERE";
+const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY_HERE";
+
+const CATEGORY_COLORS = {
+  Polity: "#378ADD",
+  Economy: "#BA7517",
+  Environment: "#639922",
+  Schemes: "#7F77DD",
+  IR: "#1D9E75",
+  Security: "#D85A30",
+  SciTech: "#D4537E",
+  Society: "#E24B4A",
+  Geography: "#5DCAA5",
+  History: "#888780"
+};
+
+let allItems = [];
+let activeCategory = null;
+
+async function fetchNewsItems() {
+  if (SUPABASE_URL.includes("YOUR_SUPABASE")) {
+    // Demo fallback so the page still shows something before you plug in real keys
+    return [
+      { place: "New Delhi, India", lat: 28.6, lon: 77.2, headline: "Sample: Supreme Court verdict on constitutional matter", category: "Polity", source_url: "#", source_name: "demo", published_at: new Date().toISOString() },
+      { place: "Ladakh, India", lat: 34.2, lon: 77.6, headline: "Sample: border infrastructure development near LAC", category: "Security", source_url: "#", source_name: "demo", published_at: new Date().toISOString() }
+    ];
+  }
+  const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const { data, error } = await client
+    .from("news_items")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) {
+    console.error("Failed to fetch news items:", error.message);
+    return [];
+  }
+  return data;
+}
+
+function timeAgo(dateStr) {
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  const hours = Math.floor(diffMs / 3600000);
+  if (hours < 1) return "just now";
+  if (hours < 24) return hours + "h ago";
+  return Math.floor(hours / 24) + "d ago";
+}
+
+function renderFilters() {
+  const container = document.getElementById("filters");
+  const categories = [...new Set(allItems.map(i => i.category))].filter(Boolean);
+  container.innerHTML = "";
+  categories.forEach(cat => {
+    const chip = document.createElement("button");
+    chip.className = "filter-chip" + (activeCategory === cat ? " active" : "");
+    chip.textContent = cat;
+    chip.onclick = () => {
+      activeCategory = activeCategory === cat ? null : cat;
+      renderFilters();
+      renderNewsList();
+      renderMarkers();
+    };
+    container.appendChild(chip);
+  });
+}
+
+function renderNewsList() {
+  const list = document.getElementById("news-list");
+  const items = activeCategory ? allItems.filter(i => i.category === activeCategory) : allItems;
+  if (items.length === 0) {
+    list.innerHTML = '<div class="empty-state">No items in this category yet</div>';
+    return;
+  }
+  list.innerHTML = "";
+  items.slice(0, 30).forEach(item => {
+    const card = document.createElement("div");
+    card.className = "news-card";
+    const color = CATEGORY_COLORS[item.category] || "#888780";
+    card.innerHTML = `
+      <div class="place">${item.place}</div>
+      <div class="headline">${item.headline}</div>
+      <div class="footer-row">
+        <span class="badge" style="background:${color}22;color:${color};">${item.category}</span>
+        <span class="timestamp">${timeAgo(item.published_at || item.created_at)}</span>
+      </div>
+    `;
+    card.onclick = () => { if (item.source_url && item.source_url !== "#") window.open(item.source_url, "_blank"); };
+    list.appendChild(card);
+  });
+}
+
+let projection, svg, markerLayer;
+
+function initMap() {
+  const container = document.getElementById("map");
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+  svg = d3.select("#map").append("svg").attr("width", "100%").attr("height", "100%")
+    .attr("viewBox", `0 0 ${width} ${height}`);
+  projection = d3.geoNaturalEarth1().fitSize([width, height], { type: "Sphere" }).scale(width / 5.8).translate([width / 2, height / 2]);
+  const path = d3.geoPath(projection);
+
+  d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json").then(world => {
+    const countries = topojson.feature(world, world.objects.countries).features;
+    svg.append("g").selectAll("path").data(countries).join("path")
+      .attr("d", path)
+      .attr("fill", "#161c23")
+      .attr("stroke", "#232b34")
+      .attr("stroke-width", 0.6);
+    markerLayer = svg.append("g");
+    renderMarkers();
+  });
+}
+
+function renderMarkers() {
+  if (!markerLayer) return;
+  const items = (activeCategory ? allItems.filter(i => i.category === activeCategory) : allItems)
+    .filter(i => i.lat != null && i.lon != null);
+
+  const groups = markerLayer.selectAll("g.marker").data(items, d => d.article_id || d.headline);
+  groups.exit().remove();
+
+  const entered = groups.enter().append("g").attr("class", "marker").style("cursor", "pointer");
+  entered.append("circle").attr("class", "glow").attr("r", 8).attr("fill", "none").attr("stroke-width", 2);
+  entered.append("circle").attr("class", "core").attr("r", 4).attr("stroke", "#0a0d11").attr("stroke-width", 1.5);
+
+  const merged = entered.merge(groups);
+  merged.attr("transform", d => {
+    const p = projection([d.lon, d.lat]);
+    return p ? `translate(${p[0]},${p[1]})` : "translate(-1000,-1000)";
+  });
+  merged.select(".glow").attr("stroke", d => CATEGORY_COLORS[d.category] || "#888780");
+  merged.select(".core").attr("fill", d => CATEGORY_COLORS[d.category] || "#888780");
+
+  merged.on("mousemove", (event, d) => {
+    const tooltip = document.getElementById("tooltip");
+    tooltip.style.display = "block";
+    tooltip.style.left = event.offsetX + 16 + "px";
+    tooltip.style.top = event.offsetY + "px";
+    tooltip.innerHTML = `<div class="place">${d.place}</div><div class="headline">${d.headline}</div>`;
+  });
+  merged.on("mouseleave", () => { document.getElementById("tooltip").style.display = "none"; });
+  merged.on("click", (event, d) => { if (d.source_url && d.source_url !== "#") window.open(d.source_url, "_blank"); });
+}
+
+async function refresh() {
+  allItems = await fetchNewsItems();
+  document.getElementById("last-updated").textContent = "Updated " + new Date().toLocaleTimeString();
+  renderFilters();
+  renderNewsList();
+  renderMarkers();
+}
+
+initMap();
+refresh();
+// Auto-refresh every 5 minutes so the page itself never needs manual reloading either
+setInterval(refresh, 5 * 60 * 1000);
+</script>
+</body>
+</html>
