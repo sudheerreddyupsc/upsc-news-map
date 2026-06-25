@@ -89,7 +89,7 @@ Respond with ONLY valid JSON, no other text, in this exact shape:
 If not relevant:
 {"relevant": false}`;
 
-async function classifyArticle(article) {
+async function classifyArticle(article, attempt = 1) {
   const content = `Headline: ${article.title}\nDescription: ${article.description || ""}`;
 
   try {
@@ -104,6 +104,12 @@ async function classifyArticle(article) {
     const cleaned = text.replace(/```json|```/g, "").trim();
     return JSON.parse(cleaned);
   } catch (err) {
+    // Transient network errors (e.g. "Premature close") are worth a couple of
+    // retries with a short backoff, rather than giving up immediately.
+    if (attempt < 3) {
+      await sleep(1000 * attempt);
+      return classifyArticle(article, attempt + 1);
+    }
     console.error("Classification failed for article:", article.title, err.message);
     return { relevant: false };
   }
@@ -163,6 +169,7 @@ async function run() {
   for (const article of articles) {
     if (!article.title) continue;
 
+    await sleep(400);
     const classification = await classifyArticle(article);
     if (!classification.relevant || !classification.place) continue;
 
